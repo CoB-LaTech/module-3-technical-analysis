@@ -1,0 +1,165 @@
+---
+title: "3: Advanced charting and an introduction to technical analysis"
+format: 
+  html: 
+    embed-resources: true
+editor: visual
+---
+
+## Technical analysis of stocks
+
+The purpose of this lesson is to see different ways of doing things we've already done, introduce technical analysis, and to create an interactive plot. Interactive plots are a great way to allow others access to statistical analysis (data analyses) so that those without such a background can still visualize information in a way that allows them to ask better questions and make better decisions.
+
+### Technical analysis
+
+We concluded the previous lesson with a visualization that yesterday's trading volume is a strong determinant (predictor) of today's (likely) trading volume. What we did, without expressly saying so, is a form of technical analysis. *Technical analysis*, at its best, is using historical data to predict future data - stock prices, trends, volume, etc. using statistical analyses. At its worst, to be fair, technical analysis is also people looking at a chart to find patterns that may or may not be there. That kind of "technical analysis" is weak, at best, because it relies too heavily upon the chart reader's intuition and biases. We're not going to do that.
+
+Instead, we're going to introduce, and code, statistically based tools that help traders make decisions. In your instructor's humble opinion, statistics-based technical analysis is a tool that is best used along what is called *fundamental analysis*, which is analysis that relies upon knowledge of the company's financials, growth prospects, products and services, competition, industry trends, and other "fundamentals" that help analysts determine which companies are strongest, and therefore may be good investments. Very often, investing professionals will use both - fundamental analysis to narrow the field of possible stock investments, and technical analysis to time trades in those stocks to (theoretically) maximize profits.
+
+### Load libraries
+
+We're going to introduce new packages in addition to those you've already seen: `quantmod`, `TTR`, and `plotly`. The first is akin to `tidyquant` in that it is a package meant for stock (and similar) manipulation. Another is `plotly`, which turns your visualizations into [interactive plots](https://plotly.com/r/). Finally, `TTR` is "technical trading rules," a package used by professional technical traders to calculate various technical indicators.
+
+```{r}
+#| label: load-libraries
+#| warning: false
+#| message: false
+
+library(tidyverse)
+library(tidyquant)
+library(quantmod)
+library(plotly)
+library(TTR)
+```
+
+As before, you will need to install packages before you can use them for the first time. That command is `install.packages("plotly")`, for example.
+
+### Download data using a `for` loop
+
+First, we're going to create a backwards-looking window so whenever we run the code we are creating a tibble of stock data that is five years up to today. That way, we always have the most up-to-date data, as we would want if we were professional traders.
+
+We're going to use the `Sys.Date()` function to make a variable `today`, and then make the 5-year lookback from there.
+
+```{r}
+#| label: lookback
+
+# create five year lookback variables
+today   <- Sys.Date()
+years5  <- today %m-% years(5)
+```
+
+Next, create a vector of tickers that we want to pull in.
+
+```{r}
+#| label: ticker-vector
+
+# create a vector of tickers
+tickers <- c("JPM", "LUV", "MCD", "NFLX")
+```
+
+Now, we're going to use a loop to create separate tibbles of stock prices for each of the stocks in our vector. Notice the `from` and `to` arguments are using the lookback window.
+
+```{r}
+#| label: download-stock-prices
+#| warning: false
+
+# grab stock prices
+for (ticker in tickers) {
+    data <- tq_get(ticker, from = years5, to = today)
+    assign(paste0(ticker, "_prices"), data)
+}
+```
+
+We won't use all of these tibbles, but I wanted to show you how it can be done. One of many ways, of course, but this way you get to code and run your first loop.
+
+### Review: simple line chart
+
+Let's make a line chart of JP Morgan's five year daily stock prices as we've done before:
+
+```{r}
+#| label: simple-line-chart
+
+JPM_prices |>
+    ggplot(aes(x = date, y = adjusted)) +
+    geom_line(color = "blue") +
+    labs(title = "JP Morgan Adjusted Close", y = "Price", x = "") +
+    theme_tq()
+```
+
+### Simple moving averages
+
+Let's move on to our first technical tool - simple moving averages (SMA). SMAs are simply the average closing stock price over a period of time, say, 30, 60, or 90 days. When we add SMAs to a chart we are doing a form of trend analysis, typically with a "fast" SMA and a "slow" SMA that allows us to compare short vs. long term trends. Let's just code some, visualize it, and see what we see. We'll create roughly a two month (50 day) and a year (200 day) moving average, and plot these over the stock chart we created above.
+
+```{r}
+#| label: sma-chart
+#| warning: false
+
+JPM_prices |>
+    ggplot(aes(x = date, y = adjusted)) +
+    geom_line(color = "blue") +
+    geom_ma(ma_fun = SMA, n = 50,  color = "black", linetype = 5, linewidth = 1) +
+    geom_ma(ma_fun = SMA, n = 200, color = "red",   linewidth = 1) +
+    labs(title    = "JP Morgan Adjusted Close",
+         subtitle = "50 and 200 day SMA",
+         y = "Price", x = "") +
+    theme_tq()
+```
+
+Note the `geom_ma` for creating a moving average. We've created a fast black SMA and a slow red SMA. Traders will compare the current stock price to the fast and slow moving averages. They are particularly interested in *crossover* points, where trends diverge. When the fast SMA crosses over the slow SMA, trend reversals are likely. Look for spots where the upward trend in current stock prices and the fast SMA cross over a downward trend in the slow SMA. That may be interpreted as a trend reversal - time to buy.
+
+### Bollinger bands
+
+We're going to dive right in to one of the more complex technical indicators, Bollinger Bands, named after John Bollinger, who developed it. Like the chart above, Bollinger Bands start with a line chart of stock prices and a simple moving average of those prices. We then calculate an upper and lower band. These bands are moving averages of the stock prices at standard deviations of the mean. The upper band represents the upper bound within a certain confidence interval, and the lower band is the lower bound of that confidence interval.
+
+You remember that two standard deviations from the mean indicates that 95% of the time the stock price observed today should fall between the bands. Three standard deviations gives you a 99% confidence interval; 99% of the time, a stock price observed today will fall between those bands. When the observed stock price is outside of the bands, we have a "tail event" that traders use to make trade decisions. If the stock price is below the lower band, it is very likely that the stock price will revert upward. If the stock price today is above the upper band, it is very likely that the stock price will revert lower.
+
+We're going to use `tidyquant` to calculate the Bollinger Bands for us. Let's make bands for Southwest Airlines. Note that we're calculating a 50-day moving average. We're also going to go three standard deviations from the mean for a 99% confidence interval: `geom_bbands(ma_fun = SMA, sd = 3, n = 50)`.
+
+```{r}
+#| label: bollinger-bands
+#| warning: false
+
+LUV_prices |>
+    ggplot(aes(x = date, y = close, open = open,
+               high = high, low = low, close = close)) +
+    geom_line(color = "blue") +
+    geom_bbands(ma_fun = SMA, sd = 3, n = 50) +
+    labs(title    = "Southwest Chart",
+         subtitle = "Bollinger Bands with 50 day SMA; 99% confidence interval",
+         y = "Closing Price", x = "") +
+    theme_tq()
+```
+
+Long term trend traders might make the SMA interval longer, say, 90 days or even a year's worth of prices. Short term traders - especially day traders - might make an SMA of minutes or even ticks.
+
+In addition, the bands will widen or narrow due to the volatility in the stock. Wide bands indicate periods of high volatility, whereas narrow bands show tight trading. Traders look for "volatility breakouts." When prices cross the upper or lower band after a period of narrow bands (low volatility) there is typically a more volatile period subsequently. You can see that in the chart you just created. 2019 was fairly "quiet," but entered into a volatile period when airlines were shuttered due to COVID in early 2020. More recently, 2022-2023 rate shocks and 2024-2025 demand swings have given plenty of breakouts to point to.
+
+### Other technical indicators
+
+We can spend an entire course just on technical indicators, but that is beyond the scope of this course. If you would like to learn more (and how to code them), feel free to explore the `quantmod`, `TTR`, and `tidyquant` packages for code around other indicators. Common technical tools include the Relative Strength Index (RSI), Moving Average Convergence Divergence (MACD), and many more.
+
+### Interactive plots: `plotly`
+
+Finally, let's introduce `plotly`, which allows us to create interactive plots. This one won't be terribly exciting, but even a basic `plotly` plot allows you to scroll, zoom, pan, select certain data, display underlying data by hovering your mouse, and so on. Let's review by pulling in prices for Apple, Inc. again with an up-to-today window we created earlier.
+
+Previously, a plot was immediately rendered using `ggplot` and displayed. Now, we create a `ggplot` object and assign it to a named object, in this case, `bar`. Then we pass `bar` to the `plotly` engine to create an interactive plot of `bar`.
+
+```{r}
+#| label: plotly-apple
+#| warning: false
+
+# Get Apple stock prices
+AAPL <- tq_get("AAPL", get = "stock.prices", from = years5, to = today)
+
+# Create a bar (histogram-style) chart
+bar <- ggplot(AAPL, aes(x = date, y = close)) +
+    geom_bar(stat = "identity", fill = "purple") +
+    labs(title = "AAPL closing price bars, 5 years",
+         x = "", y = "Closing price") +
+    theme(plot.title = element_text(hjust = 0.5))
+
+# Convert to interactive plot
+ggplotly(bar)
+```
+
+Clearly, I like purple. Play around with the `plotly` interactive abilities. Importantly, you can export your `plotly` graphics to web pages to display a portfolio of your work or, typically, to allow others to interact with them without seeing (let alone disturbing) the underlying code. The users just see the incredible thing you've created - and you look to be some kind of data wizard. Thanks, `plotly`.
